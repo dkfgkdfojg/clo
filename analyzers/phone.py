@@ -1,5 +1,4 @@
 # analyzers/phone.py
-import os
 import re
 import phonenumbers
 from phonenumbers import geocoder, carrier, timezone
@@ -36,13 +35,17 @@ def analyze_phone_combo(phone_str):
 
     # Очистка номера
     clean = re.sub(r"[^\d+]", "", phone_str)
-    if not clean.startswith("+") and len(clean) > 10:
-        clean = "+" + clean
     num_only = re.sub(r"[^\d]", "", clean)
 
     # ---------- 1. ЛОКАЛЬНЫЙ АНАЛИЗ (phonenumbers) ----------
     try:
-        parsed = phonenumbers.parse(clean)
+        # Номер в международном формате (+..) парсим как есть; иначе — с регионом
+        # по умолчанию RU, чтобы корректно распознать 10-значные и 8-префиксные
+        # номера (слепое добавление '+' ломало country code, напр. 8800... -> +8800).
+        if clean.startswith("+"):
+            parsed = phonenumbers.parse(clean)
+        else:
+            parsed = phonenumbers.parse(clean, "RU")
         if not phonenumbers.is_valid_number(parsed):
             dual_print("  [–] Номер недействителен.")
             return
@@ -57,8 +60,12 @@ def analyze_phone_combo(phone_str):
             2: "Стац./Мобильный",
             3: "Toll-free",
             4: "Premium-rate",
+            5: "Shared-cost",
             6: "VoIP",
             7: "Personal",
+            8: "Pager",
+            9: "UAN",
+            10: "Voicemail",
             99: "Неизвестен",
         }
         line = type_map.get(phonenumbers.number_type(parsed), "Неизвестен")

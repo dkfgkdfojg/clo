@@ -31,11 +31,15 @@ def print_section(title):
 
 
 def print_field(label, value, indent=4):
-    """Выводит поле, если значение непустое."""
+    """Выводит поле, если значение непустое.
+
+    'false' НЕ подавляется: для OSINT «disposable: False», «vpn: False» и т.п. —
+    полезная информация, а не пустое значение.
+    """
     if value is None:
         return
     v = str(value).strip()
-    if v and v.lower() not in ("none", "null", "n/a", "false"):
+    if v and v.lower() not in ("none", "null", "n/a"):
         dual_print(f"{' ' * indent}{label:<26} {v}")
 
 

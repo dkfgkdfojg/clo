@@ -18,14 +18,28 @@ def get_headers(mobile=False):
     }
 
 
-def get_session(mobile=False, retries=3, backoff=0.5):
-    """Возвращает сессию с автоматическими повторными попытками."""
+def _redact(url: str) -> str:
+    """Strip the query string so API keys/tokens don't leak into osint.log."""
+    return url.split("?", 1)[0]
+
+
+def get_session(mobile=False, retries=2, backoff=0.5):
+    """Сессия с ретраями ТОЛЬКО по HTTP-статусам (429/5xx).
+
+    Транспортные исключения (Timeout/ConnectionError) обрабатывает safe_get —
+    так два слоя ретраев не компаундятся (раньше адаптер и safe_get повторяли
+    одну и ту же сетевую ошибку, давая до ~9-12 запросов на упавший хост).
+    """
     session = requests.Session()
     session.headers.update(get_headers(mobile))
     retry = Retry(
-        total=retries,
-        backoff_factor=backoff,
+        total=None,          # granular-лимиты ниже применяются независимо
+        connect=0,           # транспортные ретраи — за safe_get
+        read=0,
+        redirect=0,
+        status=retries,      # повторяем только по статус-кодам
         status_forcelist=[429, 500, 502, 503, 504],
+        backoff_factor=backoff,
         allowed_methods=["HEAD", "GET", "OPTIONS"],
     )
     adapter = HTTPAdapter(max_retries=retry)
@@ -36,8 +50,10 @@ def get_session(mobile=False, retries=3, backoff=0.5):
 
 def safe_get(session, url, timeout=12, retries=2, **kwargs):
     """
-    Выполняет GET с повторными попытками при ошибках сети.
-    Перехватывает: Timeout, ConnectionError, HTTPError, TooManyRedirects.
+    Выполняет GET с повторными попытками при транспортных ошибках сети.
+    Перехватывает: Timeout, ConnectionError, TooManyRedirects.
+    (HTTPError не ловим: session.get без raise_for_status() его не бросает —
+    не-2xx статусы возвращаются как есть, вызывающий код проверяет status_code.)
     """
     for attempt in range(retries + 1):
         try:
@@ -45,13 +61,12 @@ def safe_get(session, url, timeout=12, retries=2, **kwargs):
         except (
             requests.exceptions.Timeout,
             requests.exceptions.ConnectionError,
-            requests.exceptions.HTTPError,
             requests.exceptions.TooManyRedirects,
         ) as e:
             if attempt < retries:
                 sleep_time = 1.2 * (attempt + 1)
                 time.sleep(sleep_time)
-                logger.debug(f"Retry {attempt + 1}/{retries} for {url}: {e}")
+                logger.debug("Retry %d/%d for %s: %s", attempt + 1, retries, _redact(url), e)
             else:
-                logger.error(f"Failed to fetch {url}: {e}")
+                logger.error("Failed to fetch %s: %s", _redact(url), e)
                 raise
