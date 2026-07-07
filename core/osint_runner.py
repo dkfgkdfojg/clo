@@ -12,17 +12,15 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import os
 import re
-import shlex
+import shutil
 import subprocess
-import sys
-import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from core.utils import dual_print, logger
 
@@ -32,6 +30,11 @@ from core.utils import dual_print, logger
 
 MAX_WORKERS: int = 6
 CLI_TIMEOUT: int = 45  # seconds per tool
+
+# Прекомпилированные паттерны для разбора текстового вывода CLI-инструментов
+# "[+] SiteName: https://url" — общий формат Sherlock/Maigret/Blackbird в text-режиме
+_PLUS_LINE_RE = re.compile(r"\[\+\]\s*([^:]+?):\s*(https?://\S+)")
+_URL_RE = re.compile(r"https?://[^\s]+")
 
 # ============================================================================
 # DATA STRUCTURES
@@ -59,6 +62,7 @@ class ToolConfig:
     check_installed: str | None = None  # binary/command to check, e.g. "sherlock"
     pip_package: str | None = None  # pip package name if installable
     timeout: int = CLI_TIMEOUT
+    email_only: bool = False  # tool expects an email target, not a username
 
 
 # ============================================================================
@@ -87,19 +91,19 @@ def _parse_sherlock(stdout: str, username: str) -> list[FoundAccount]:
                         )
     except (json.JSONDecodeError, AttributeError) as exc:
         logger.debug("Sherlock parse error: %s", exc)
-        # Fallback: try to parse lines
+        # Fallback: Sherlock's text mode prints "[+] SiteName: https://url".
+        # Recover real site names instead of collapsing to one bogus label.
         for line in stdout.splitlines():
-            if username.lower() in line.lower() and "http" in line:
-                m = re.search(r"https?://[^\s]+", line)
-                if m:
-                    results.append(
-                        FoundAccount(
-                            site="sherlock_unknown",
-                            url=m.group(),
-                            username=username,
-                            source="sherlock",
-                        )
+            m = _PLUS_LINE_RE.search(line)
+            if m:
+                results.append(
+                    FoundAccount(
+                        site=m.group(1).strip(),
+                        url=m.group(2).strip(),
+                        username=username,
+                        source="sherlock",
                     )
+                )
     return results
 
 
@@ -127,6 +131,20 @@ def _parse_maigret(stdout: str, username: str) -> list[FoundAccount]:
                         )
     except (json.JSONDecodeError, AttributeError) as exc:
         logger.debug("Maigret parse error: %s", exc)
+        # Fallback: Maigret's --json writes a report FILE, so stdout is text
+        # progress ("[+] Site: url"). Without this the strongest tool returned
+        # zero results silently.
+        for line in stdout.splitlines():
+            m = _PLUS_LINE_RE.search(line)
+            if m:
+                results.append(
+                    FoundAccount(
+                        site=m.group(1).strip(),
+                        url=m.group(2).strip(),
+                        username=username,
+                        source="maigret",
+                    )
+                )
     return results
 
 
@@ -186,33 +204,32 @@ def _parse_blackbird(stdout: str, username: str) -> list[FoundAccount]:
 def _parse_holehe(stdout: str, username: str) -> list[FoundAccount]:
     """Parse Holehe output (email check, returns sites where email is registered)."""
     results: list[FoundAccount] = []
-    # Holehe doesn't output JSON by default, parse table lines
+    # Holehe output: "[+] site.com" for registered, "[-] site.com" for not.
+    # Only positive ("[+]") lines are real hits.
     for line in stdout.splitlines():
         line_stripped = line.strip()
-        # Holehe output: "[+] site.com" for registered, "[-] site.com" for not
-        if line_stripped.startswith("[+]") or "[+]" in line_stripped:
-            parts = line_stripped.split()
-            for part in parts:
-                if (
-                    "." in part
-                    and not part.startswith("[")
-                    and not part.startswith("http")
-                ):
-                    url = f"https://{part}"
-                    results.append(
-                        FoundAccount(
-                            site=part, url=url, username=username, source="holehe"
-                        )
-                    )
-                    break
-        # Also catch lines with http links
-        m = re.search(r"https?://[^\s]+", line_stripped)
+        if "[+]" not in line_stripped:
+            continue
+        # Prefer an explicit URL on the line; otherwise reconstruct from domain.
+        m = _URL_RE.search(line_stripped)
         if m:
+            url = m.group().rstrip(".,;:")
+            site = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
             results.append(
-                FoundAccount(
-                    site="holehe", url=m.group(), username=username, source="holehe"
-                )
+                FoundAccount(site=site, url=url, username=username, source="holehe")
             )
+            continue
+        for part in line_stripped.split():
+            if "." in part and not part.startswith("[") and not part.startswith("http"):
+                results.append(
+                    FoundAccount(
+                        site=part,
+                        url=f"https://{part}",
+                        username=username,
+                        source="holehe",
+                    )
+                )
+                break
     return results
 
 
@@ -220,10 +237,13 @@ def _parse_nexfil(stdout: str, username: str) -> list[FoundAccount]:
     """Parse Nexfil output."""
     results: list[FoundAccount] = []
     for line in stdout.splitlines():
-        m = re.search(r"https?://[^\s]+", line)
+        # Only positive-hit lines. Without this filter Nexfil's banner/author/
+        # repo URLs and progress lines were reported as discovered accounts.
+        if "[+]" not in line and "found" not in line.lower():
+            continue
+        m = _URL_RE.search(line)
         if m:
             url = m.group().rstrip(".,;:")
-            # Extract site name from URL
             site = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
             results.append(
                 FoundAccount(site=site, url=url, username=username, source="nexfil")
@@ -232,21 +252,29 @@ def _parse_nexfil(stdout: str, username: str) -> list[FoundAccount]:
 
 
 def _parse_socialscan(stdout: str, username: str) -> list[FoundAccount]:
-    """Parse Socialscan output."""
+    """Parse Socialscan output.
+
+    Socialscan reports availability: an *unavailable* (taken/claimed) handle
+    means the account exists. Matching only "taken"/"claimed" missed the common
+    "unavailable" wording and dropped real hits.
+    """
     results: list[FoundAccount] = []
     for line in stdout.splitlines():
-        # Format: "platform: available/taken"
-        if "taken" in line.lower() or "claimed" in line.lower():
-            parts = line.split(":")
-            if len(parts) >= 1:
-                site = parts[0].strip()
-                m = re.search(r"https?://[^\s]+", line)
-                url = m.group() if m else f"https://{site.lower()}.com/{username}"
-                results.append(
-                    FoundAccount(
-                        site=site, url=url, username=username, source="socialscan"
-                    )
-                )
+        low = line.lower()
+        if not ("unavailable" in low or "taken" in low or "claimed" in low):
+            continue
+        if "available" in low and "unavailable" not in low:
+            continue  # explicit "Available" — not a hit
+        parts = line.split(":", 1)
+        site = parts[0].strip()
+        if not site:
+            continue
+        m = _URL_RE.search(line)
+        # socialscan doesn't emit URLs; keep a real one only if present.
+        url = m.group() if m else f"socialscan://{site}/{username}"
+        results.append(
+            FoundAccount(site=site, url=url, username=username, source="socialscan")
+        )
     return results
 
 
@@ -335,6 +363,7 @@ TOOLS: list[ToolConfig] = [
         parser=_parse_holehe,
         check_installed="holehe",
         pip_package="holehe",
+        email_only=True,  # Holehe проверяет регистрацию EMAIL, не ника
     ),
     ToolConfig(
         name="Nexfil",
@@ -379,7 +408,6 @@ EXTENDED_TOOLS: list[ToolConfig] = [
 
 # Custom user scripts directory
 USER_SCRIPTS_DIR = Path.home() / ".config" / "hackerai" / "osint_scripts"
-USER_SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================================
@@ -400,20 +428,27 @@ def get_install_instructions() -> dict[str, str]:
 
 
 def check_tool_installed(tool: ToolConfig) -> bool:
-    """Check if a tool is installed on the system."""
+    """Check if a tool is installed on the system.
+
+    * ``check_installed`` set  -> probe that binary via ``which``.
+    * ``python3 -m <module>``  -> probe the module via importlib.
+    * otherwise                -> probe the first command token via ``which``.
+
+    Раньше инструменты с ``check_installed=None`` (все EXTENDED_TOOLS) всегда
+    считались неустановленными и никогда не запускались.
+    """
+    cmd = tool.cmd_template
     if tool.check_installed:
+        return shutil.which(tool.check_installed) is not None
+    if not cmd:
+        return False
+    # python3 -m module  ->  проверяем модуль, а не наличие python
+    if cmd[0] in ("python", "python3") and len(cmd) >= 3 and cmd[1] == "-m":
         try:
-            result = subprocess.run(
-                ["which", tool.check_installed],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return True
-        except (subprocess.SubprocessError, FileNotFoundError):
-            pass
-    return False
+            return importlib.util.find_spec(cmd[2]) is not None
+        except (ImportError, ValueError):
+            return False
+    return shutil.which(cmd[0]) is not None
 
 
 def get_installed_tools() -> list[ToolConfig]:
@@ -497,6 +532,11 @@ def run_all_username_tools(
     if include_extended:
         tools.extend([t for t in EXTENDED_TOOLS if check_tool_installed(t)])
 
+    # Holehe и подобные ждут email — на ник (без "@") они бесполезны и только
+    # засоряют вывод ошибками. Прогоняем их лишь когда цель похожа на email.
+    is_email = "@" in username
+    tools = [t for t in tools if is_email or not t.email_only]
+
     if not tools:
         dual_print("  [!] Ни одна OSINT-утилита не установлена.")
         dual_print("  [!] Установите хотя бы одну:")
@@ -563,10 +603,14 @@ def register_user_script(name: str, command: str) -> Path:
         Path to the created script file.
     """
     script_path = USER_SCRIPTS_DIR / f"{name}.sh"
+    USER_SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    # Подставляем {username} как позиционный аргумент $1 — тогда реальное имя
+    # приходит при запуске (раньше {username} оставался литералом в теле .sh).
+    body = command.replace("{username}", '"$1"')
     script_content = f"""#!/bin/bash
 # Auto-generated OSINT script: {name}
 # Command: {command}
-{command}
+{body}
 """
     script_path.write_text(script_content)
     script_path.chmod(0o755)
@@ -580,8 +624,7 @@ def run_user_script(script_name: str, username: str) -> list[FoundAccount]:
         logger.debug("User script '%s' not found at %s", script_name, script_path)
         return []
 
-    cmd = [str(script_path)]
-    cmd = [part.replace("{username}", username) for part in cmd]
+    cmd = [str(script_path), username]
 
     try:
         result = subprocess.run(
