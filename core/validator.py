@@ -24,6 +24,7 @@ from config import BLACKLIST_SITES, SEARCH_URL_PATTERNS, ERROR_PATTERNS
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 _PHONE_RE = re.compile(r"^\+?[1-9]\d{6,14}$")
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,30}$")
+_USERNAME_CHARS_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
 _DOMAIN_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
 )
@@ -66,7 +67,8 @@ _MAC_ADDRESS_RE = re.compile(r"^(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
 _IPV4_RE = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b")
 _IPV6_RE = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b")
 _SSH_KEY_RE = re.compile(
-    r"^(ssh-rsa|ssh-ed25519|ssh-dss|ecdsa-sha2-nistp\d{3})\s+A-Za-z0-9+/=+"
+    r"^(?:ssh-rsa|ssh-ed25519|ssh-dss|ecdsa-sha2-nistp\d{3})\s+"
+    r"[A-Za-z0-9+/]+={0,3}(?:\s+\S.*)?$"
 )
 
 # --- Social / API Keys ---
@@ -290,10 +292,12 @@ def validate_ipv6(ip: str) -> bool:
 
 
 def validate_username(username: str, min_len: int = 3, max_len: int = 30) -> bool:
-    """Validate generic username (alphanumeric + ._-)."""
+    """Validate generic username (alphanumeric + ._-), length in [min_len, max_len]."""
     if not isinstance(username, str):
         return False
-    return bool(_USERNAME_RE.match(username))
+    if not min_len <= len(username) <= max_len:
+        return False
+    return bool(_USERNAME_CHARS_RE.match(username))
 
 
 def validate_domain(domain: str) -> bool:
