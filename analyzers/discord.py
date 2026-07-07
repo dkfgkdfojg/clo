@@ -294,47 +294,37 @@ def _scrape_sensor_history(
 def _print_history_block(
     source_name: str, names: list[str], seen: set[str], limit: int = MAX_HISTORY_ENTRIES
 ) -> int:
-    """Print deduplicated history entries. Returns number of new unique names."""
+    """Print history entries that are new relative to `seen`.
+
+    Учитывает имена, ещё не встречавшиеся в других источниках (глобальный `seen`),
+    дедуплицирует внутри блока и печатает не более `limit` строк.
+    Возвращает число новых уникальных имён и обновляет `seen`.
+    """
     if not names:
         dual_print(f"  [–] {source_name}: пусто")
         return 0
 
-    new_count = 0
+    # Отбираем только имена, новые относительно seen, с сохранением порядка
+    new_names: list[str] = []
+    block_seen: set[str] = set()
     for name in names:
         key = name.lower().strip()
-        if key and key not in seen:
-            seen.add(key)
-            new_count += 1
+        if not key or key in seen or key in block_seen:
+            continue
+        block_seen.add(key)
+        new_names.append(name)
 
-    if new_count == 0:
+    if not new_names:
         dual_print(f"  [–] {source_name}: нет новых имён")
         return 0
 
-    dual_print(f"  [+] {source_name} (+{new_count}):")
-    # Print only the new ones
-    printed = 0
-    for name in names:
-        if printed >= limit:
-            break
-        key = name.lower().strip()
-        # Check if this name is in seen and we haven't printed it yet
-        # We use a separate tracking set for printed within this block
-        pass
+    seen.update(block_seen)
 
-    # Simpler: re-check seen but track printed separately
-    printed_set: set[str] = set()
-    for name in names:
-        if printed >= limit:
-            break
-        key = name.lower().strip()
-        if key in printed_set:
-            continue
-        printed_set.add(key)
-        if key in seen:
-            dual_print(f"    → {name}")
-            printed += 1
+    dual_print(f"  [+] {source_name} (+{len(new_names)}):")
+    for name in new_names[:limit]:
+        dual_print(f"    → {name}")
 
-    return new_count
+    return len(new_names)
 
 
 def _fetch_sensor(
