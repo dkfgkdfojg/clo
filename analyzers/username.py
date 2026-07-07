@@ -35,7 +35,6 @@ from core.osint_runner import (
 )
 from config import (
     BLACKLIST_SITES,
-    ALWAYS_200_SITES,
     ERROR_PATTERNS,
     SEARCH_URL_PATTERNS,
     EXTRA_PLATFORMS,
@@ -48,6 +47,39 @@ from config import (
 MAX_SCRAPE_WORKERS: int = 15
 MAX_FILTER_WORKERS: int = 30
 REQUEST_TIMEOUT: int = 12
+
+# ---------------------------------------------------------------------------
+# Прекомпилированные паттерны
+# (компилируются один раз при импорте, переиспользуются для каждой из 60+ платформ)
+# ---------------------------------------------------------------------------
+
+_ERROR_PATTERN_RES = [re.compile(p, re.I) for p in ERROR_PATTERNS]
+_SEARCH_URL_RES = [re.compile(p) for p in SEARCH_URL_PATTERNS]
+_NOT_FOUND_RES = [
+    re.compile(p, re.I)
+    for p in (
+        r"user not found",
+        r"doesn't exist",
+        r"no user",
+        r"пользователь не найден",
+        r"не существует",
+        r"page not found",
+        r"страница не найдена",
+        r"this account doesn",
+        r"this profile is private",
+        r"profile not found",
+        r"no profile",
+    )
+]
+_TITLE_ERROR_WORDS = (
+    "error",
+    "invalid",
+    "not found",
+    "ошибка",
+    "404",
+    "403",
+    "page not",
+)
 
 # ---------------------------------------------------------------------------
 # Dataclasses
@@ -168,8 +200,8 @@ class UsernameEndpoints:
 def _is_error_page(html: str, url: str, username: str) -> bool:
     """Check if the HTML indicates a non-profile page."""
     text = html.lower()
-    for pat in ERROR_PATTERNS:
-        if re.search(pat, text, re.I):
+    for rx in _ERROR_PATTERN_RES:
+        if rx.search(text):
             return True
     try:
         soup = BeautifulSoup(html, "html.parser")
@@ -179,39 +211,15 @@ def _is_error_page(html: str, url: str, username: str) -> bool:
         title = soup.find("title")
         if title:
             t = title.get_text().lower()
-            if any(
-                w in t
-                for w in (
-                    "error",
-                    "invalid",
-                    "not found",
-                    "ошибка",
-                    "404",
-                    "403",
-                    "page not",
-                )
-            ):
+            if any(w in t for w in _TITLE_ERROR_WORDS):
                 return True
-        not_found = [
-            r"user not found",
-            r"doesn't exist",
-            r"no user",
-            r"пользователь не найден",
-            r"не существует",
-            r"page not found",
-            r"страница не найдена",
-            r"this account doesn",
-            r"this profile is private",
-            r"profile not found",
-            r"no profile",
-        ]
-        for pat in not_found:
-            if re.search(pat, text, re.I):
+        for rx in _NOT_FOUND_RES:
+            if rx.search(text):
                 return True
     except Exception as exc:
         logger.debug("Error page check failed: %s", exc)
-    for pat in SEARCH_URL_PATTERNS:
-        if re.search(pat, url):
+    for rx in _SEARCH_URL_RES:
+        if rx.search(url):
             return True
     return False
 
@@ -224,51 +232,32 @@ def _is_error_page(html: str, url: str, username: str) -> bool:
 def _check_single_url(
     site: str, url: str, username: str, session: Any, timeout: int = REQUEST_TIMEOUT
 ) -> FoundAccount | None:
-    """Check one URL for a valid user profile."""
+    """Check one URL for a valid user profile.
+
+    HEAD → если 200, подтягиваем финальную (после редиректов) страницу GET-ом
+    и считаем профиль найденным, только если имя присутствует в контенте
+    и страница не является error/not-found. Единая проверка контента
+    применяется ко всем платформам (включая ALWAYS_200_SITES, которые
+    отдают 200 даже на несуществующий профиль).
+    """
     if any(bad in url.lower() for bad in BLACKLIST_SITES):
         return None
-    if any(re.search(pat, url) for pat in SEARCH_URL_PATTERNS):
+    if any(rx.search(url) for rx in _SEARCH_URL_RES):
         return None
     try:
         resp = session.head(url, timeout=timeout, allow_redirects=True)
+        if resp.status_code != 200:
+            return None
         final_url = resp.url
-        code = resp.status_code
-        force_get = any(s in final_url.lower() for s in ALWAYS_200_SITES)
-        if code == 200 and not force_get:
-            if username.lower() not in final_url.lower() and final_url.rstrip(
-                "/"
-            ) != url.rstrip("/"):
-                gr = safe_get(session, final_url, timeout=timeout)
-                if (
-                    gr
-                    and username.lower() in gr.text.lower()
-                    and not _is_error_page(gr.text, final_url, username)
-                ):
-                    return FoundAccount(
-                        site=site, url=final_url, username=username, source="direct"
-                    )
-                return None
-            gr = safe_get(session, final_url, timeout=timeout)
-            if (
-                gr
-                and username.lower() in gr.text.lower()
-                and not _is_error_page(gr.text, final_url, username)
-            ):
-                return FoundAccount(
-                    site=site, url=final_url, username=username, source="direct"
-                )
-            return None
-        if code == 200 and force_get:
-            gr = safe_get(session, final_url, timeout=timeout)
-            if (
-                gr
-                and username.lower() in gr.text.lower()
-                and not _is_error_page(gr.text, final_url, username)
-            ):
-                return FoundAccount(
-                    site=site, url=final_url, username=username, source="direct"
-                )
-            return None
+        gr = safe_get(session, final_url, timeout=timeout)
+        if (
+            gr
+            and username.lower() in gr.text.lower()
+            and not _is_error_page(gr.text, final_url, username)
+        ):
+            return FoundAccount(
+                site=site, url=final_url, username=username, source="direct"
+            )
     except Exception as exc:
         logger.debug("Check %s failed: %s", url, exc)
     return None
