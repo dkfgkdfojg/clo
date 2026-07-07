@@ -1,0 +1,19 @@
+# Секреты
+.env
+
+# Логи и отчёты
+*.log
+reports/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Мёртвый монолит (заменён рефактором на пакеты)
+clo.py
+
+# IDE
+.idea/
+.vscode/
