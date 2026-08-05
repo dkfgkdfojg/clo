@@ -111,8 +111,24 @@ class OSINTApp:
         self._pulse_on = False
 
         self._build_layout()
-        sys.stdout = RedirectText(self.text_area)
+
+        # stdout подменяем на время жизни окна и обязательно возвращаем в
+        # _on_close: без этого после закрытия GUI любой print из консольного
+        # режима уходил в уничтоженный виджет и падал с TclError.
+        self._orig_stdout = sys.stdout
+        self._redirect = RedirectText(self.text_area, root=self.root)
+        sys.stdout = self._redirect
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self._banner()
+
+    def _on_close(self):
+        """Гасим таймеры и возвращаем stdout, потом закрываем окно."""
+        self._stop_pulse()
+        if getattr(self, "_redirect", None) is not None:
+            self._redirect.close()
+        sys.stdout = getattr(self, "_orig_stdout", sys.__stdout__)
+        self.root.destroy()
 
     # ================= LAYOUT =================
     def _build_layout(self):
@@ -468,12 +484,21 @@ class OSINTApp:
 
         pulse()
 
-    def _stop_pulse(self, color):
+    def _stop_pulse(self, color=None):
+        # color необязателен: при закрытии окна нам нужно только погасить
+        # таймер, а перекрашивать уже нечего
         self._pulse_on = False
         if self._pulse_job:
-            self.root.after_cancel(self._pulse_job)
+            try:
+                self.root.after_cancel(self._pulse_job)
+            except tk.TclError:
+                pass
             self._pulse_job = None
-        self._status_dot.configure(text_color=color)
+        if color is not None:
+            try:
+                self._status_dot.configure(text_color=color)
+            except tk.TclError:
+                pass
 
     def save_report(self):
         path = filedialog.asksaveasfilename(
@@ -522,14 +547,28 @@ class OSINTApp:
         def wrapper():
             try:
                 func(arg)
-                self.root.after(0, lambda: self._status("Готов"))
+                self._ui(lambda: self._status("Готов"))
             except Exception as e:
+                # dual_print безопасен: RedirectText кладёт текст в очередь,
+                # а рисует его уже главный поток
                 dual_print(f"\n[!] Ошибка: {e}")
-                self.root.after(0, lambda: self._status("Ошибка", C.DANGER))
+                self._ui(lambda: self._status("Ошибка", C.DANGER))
             finally:
-                self.root.after(0, lambda: self._stat_var.set("Готов к работе"))
+                self._ui(lambda: self._stat_var.set("Готов к работе"))
 
         threading.Thread(target=wrapper, daemon=True).start()
+
+    def _ui(self, fn):
+        """Выполнить fn в главном потоке. Молчит, если окно уже закрыто.
+
+        Анализатор живёт в фоновом потоке и может завершиться уже после того,
+        как пользователь закрыл окно — тогда after() бросает TclError на
+        уничтоженном интерпретаторе Tk.
+        """
+        try:
+            self.root.after(0, fn)
+        except (tk.TclError, RuntimeError):
+            pass
 
     # ---- Методы для оставшихся модулей ----
     def run_phone(self):

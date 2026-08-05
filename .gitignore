@@ -17,3 +17,6 @@ clo.py
 # IDE
 .idea/
 .vscode/
+
+# рабочие файлы Claude Code
+.claude/
