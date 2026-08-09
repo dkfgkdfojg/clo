@@ -21,8 +21,32 @@ from typing import Any, Callable
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from config import API_KEYS
 from core.http import get_session, safe_get
 from core.utils import dual_print, print_section, print_field, print_summary, logger
+
+DISCORD_API = "https://discord.com/api/v10"
+
+# public_flags → бейджи. Основной источник «настоящих» данных об аккаунте.
+PUBLIC_FLAGS = {
+    1 << 0: "Discord Staff",
+    1 << 1: "Partner",
+    1 << 2: "HypeSquad Events",
+    1 << 3: "Bug Hunter (Level 1)",
+    1 << 6: "HypeSquad Bravery",
+    1 << 7: "HypeSquad Brilliance",
+    1 << 8: "HypeSquad Balance",
+    1 << 9: "Early Supporter",
+    1 << 14: "Bug Hunter (Level 2)",
+    1 << 16: "Verified Bot",
+    1 << 17: "Early Verified Bot Developer",
+    1 << 18: "Certified Moderator",
+    1 << 22: "Active Developer",
+}
+
+
+def _decode_flags(flags: int) -> list[str]:
+    return [name for bit, name in PUBLIC_FLAGS.items() if flags & bit]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -641,6 +665,125 @@ def _fetch_username_history(
 # ---------------------------------------------------------------------------
 
 
+def _api_headers() -> dict[str, str] | None:
+    token = API_KEYS.get("DISCORD_BOT_TOKEN")
+    if not token:
+        return None
+    return {"Authorization": f"Bot {token}", "User-Agent": "clo-osint/1.0"}
+
+
+def _avatar_url(uid: str, avatar: str | None) -> str:
+    if not avatar:
+        return ""
+    ext = "gif" if avatar.startswith("a_") else "png"
+    return f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.{ext}?size=1024"
+
+
+def _fetch_official_api(session, user_id: str, results: dict) -> None:
+    """GET /users/{id} — реальные данные аккаунта (бейджи, аватар, бот-флаг).
+
+    Требует бот-токен. Без него единственный полностью достоверный источник
+    (остальные — скрейперы сторонних сайтов, часто мёртвые)."""
+    headers = _api_headers()
+    print_section("Discord API (официальный)")
+    if headers is None:
+        dual_print("  [i] Нет DISCORD_BOT_TOKEN — пропуск. Задай в .env для точных данных.")
+        return
+    try:
+        r = safe_get(session, f"{DISCORD_API}/users/{user_id}", headers=headers, timeout=12)
+    except Exception as exc:
+        dual_print(f"  [!] API: {exc}")
+        return
+    if r.status_code == 404:
+        dual_print("  [!] Пользователь с таким ID не существует.")
+        return
+    if r.status_code != 200:
+        dual_print(f"  [!] API вернул {r.status_code}")
+        return
+
+    d = r.json()
+    username = d.get("username", "")
+    disc = d.get("discriminator", "0")
+    handle = username if disc in ("0", "", None) else f"{username}#{disc}"
+    print_field("Username", handle)
+    print_field("Global name", d.get("global_name"))
+    print_field("ID", d.get("id"))
+    print_field("Бот", "да" if d.get("bot") else "нет")
+    if d.get("system"):
+        print_field("Системный", "да")
+    badges = _decode_flags(d.get("public_flags", 0))
+    if badges:
+        print_field("Бейджи", ", ".join(badges))
+        results["Бейджи"] = ", ".join(badges)
+    avatar = _avatar_url(user_id, d.get("avatar"))
+    if avatar:
+        print_field("Аватар", avatar)
+    if d.get("banner"):
+        ext = "gif" if d["banner"].startswith("a_") else "png"
+        print_field("Баннер", f"https://cdn.discordapp.com/banners/{user_id}/{d['banner']}.{ext}?size=1024")
+    if d.get("accent_color"):
+        print_field("Цвет профиля", f"#{d['accent_color']:06X}")
+
+    results["Username"] = handle
+    if d.get("global_name"):
+        results["Global name"] = d["global_name"]
+
+
+def _resolve_invite(session, code: str, results: dict) -> None:
+    """GET /invites/{code}?with_counts — данные сервера по инвайту (без токена)."""
+    print_section("Инвайт-сервер")
+    url = f"{DISCORD_API}/invites/{code}?with_counts=true&with_expiration=true"
+    try:
+        r = safe_get(session, url, timeout=12)
+    except Exception as exc:
+        dual_print(f"  [!] invite: {exc}")
+        return
+    if r.status_code != 200:
+        dual_print(f"  [!] Инвайт недействителен ({r.status_code}).")
+        return
+    d = r.json()
+    guild = d.get("guild") or {}
+    print_field("Сервер", guild.get("name"))
+    print_field("Guild ID", guild.get("id"))
+    if guild.get("description"):
+        print_field("Описание", guild["description"])
+    print_field("Участников", d.get("approximate_member_count"))
+    print_field("Онлайн", d.get("approximate_presence_count"))
+    ch = d.get("channel") or {}
+    print_field("Канал", ch.get("name"))
+    inviter = d.get("inviter") or {}
+    if inviter:
+        print_field("Пригласил", f"{inviter.get('username')} (id {inviter.get('id')})")
+    if guild.get("id"):
+        results["Guild ID"] = guild["id"]
+        _fetch_guild_widget(session, guild["id"], results)
+
+
+def _fetch_guild_widget(session, guild_id: str, results: dict) -> None:
+    """widget.json — доступен, только если владелец включил виджет сервера."""
+    try:
+        r = safe_get(session, f"{DISCORD_API}/guilds/{guild_id}/widget.json", timeout=10)
+    except Exception:
+        return
+    if r.status_code != 200:
+        return
+    d = r.json()
+    print_section("Widget сервера")
+    print_field("Онлайн (widget)", d.get("presence_count"))
+    if d.get("instant_invite"):
+        print_field("Инвайт", d["instant_invite"])
+    members = d.get("members") or []
+    if members:
+        sample = ", ".join(m.get("username", "?") for m in members[:15])
+        print_field("Онлайн-участники", sample)
+    channels = d.get("channels") or []
+    if channels:
+        print_field("Каналов видно", str(len(channels)))
+
+
+_INVITE_RE = re.compile(r"(?:discord\.gg|discord(?:app)?\.com/invite)/([A-Za-z0-9-]+)", re.I)
+
+
 def analyze_discord(user_id: str, endpoints: DiscordEndpoints | None = None) -> None:
     """
     Perform a comprehensive analysis of a Discord user ID.
@@ -652,17 +795,29 @@ def analyze_discord(user_id: str, endpoints: DiscordEndpoints | None = None) -> 
     endpoints : DiscordEndpoints, optional
         Override remote-URL configuration (for tests or custom infra).
     """
+    user_id = user_id.strip()
+    endpoints = endpoints or DiscordEndpoints()
+    results: dict[str, str] = {}
+    session = get_session()
+
+    # инвайт-ссылка/код вместо ID → разбираем сервер
+    inv = _INVITE_RE.search(user_id)
+    if inv or (not user_id.isdigit() and re.fullmatch(r"[A-Za-z0-9-]{2,25}", user_id)):
+        code = inv.group(1) if inv else user_id
+        dual_print(f"\n{'═' * 58}")
+        dual_print(f"  [+] DISCORD INVITE: {code}")
+        dual_print(f"{'═' * 58}")
+        _resolve_invite(session, code, results)
+        print_summary(results, f"Discord invite {code}")
+        return
+
     dual_print(f"\n{'═' * 58}")
     dual_print(f"  [+] DISCORD ID: {user_id}")
     dual_print(f"{'═' * 58}")
 
     if not user_id.isdigit():
-        dual_print("  [!] ID должен быть числом.")
+        dual_print("  [!] Введите числовой ID или инвайт (discord.gg/...).")
         return
-
-    endpoints = endpoints or DiscordEndpoints()
-    results: dict[str, str] = {}
-    session = get_session()
 
     # ---------- Snowflake ----------
     print_section("Snowflake — дата создания аккаунта")
@@ -679,6 +834,7 @@ def analyze_discord(user_id: str, endpoints: DiscordEndpoints | None = None) -> 
     # ---------- Parallel data collection ----------
     print_section("Параллельный сбор данных...")
     tasks: list[Callable[[], None]] = [
+        lambda: _fetch_official_api(session, user_id, results),
         lambda: _fetch_sensor(session, user_id, endpoints, results),
         lambda: _fetch_tracker(session, user_id, endpoints, results),
         lambda: _fetch_discord_id(session, user_id, endpoints, results),

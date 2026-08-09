@@ -21,6 +21,9 @@ from analyzers.phone import analyze_phone_combo
 from analyzers.username import analyze_username_combo
 from analyzers.email import analyze_email_leaks
 from analyzers.discord import analyze_discord
+from analyzers.telegram import analyze_telegram_full
+from analyzers.github import analyze_github
+from analyzers.investigate import investigate
 from analyzers.ip import analyze_ip_basic, analyze_shodan_smart
 from analyzers.photo import analyze_photo  # оставляем
 from analyzers.domain import (
@@ -29,6 +32,7 @@ from analyzers.domain import (
 
 # Утилиты для вывода в консоль и логирования
 from core.utils import dual_print
+from core import report
 
 from gui.redirect import RedirectText
 
@@ -71,6 +75,9 @@ class C:
         "username": "#3DDC97",
         "email": "#56CCF2",
         "discord": "#7C8CFF",
+        "telegram": "#2AABEE",
+        "github": "#A371F7",
+        "investigate": "#FF3D71",
         "ip": "#FFB454",
         "shodan": "#FF5C7A",
         "photo": "#FF6B6B",
@@ -106,6 +113,7 @@ class OSINTApp:
         )
 
         self._req = 0
+        self._last_report = None
         self.active_key = None
         self._pulse_job = None
         self._pulse_on = False
@@ -189,6 +197,9 @@ class OSINTApp:
             ("username", "👤", "Анализ username", self.run_username),
             ("email", "✉️", "Анализ Email", self.run_email),
             ("discord", "💬", "Discord ID", self.run_discord),
+            ("telegram", "✈️", "Telegram", self.run_telegram),
+            ("github", "🐙", "GitHub", self.run_github),
+            ("investigate", "🔗", "Расследование", self.run_investigate),
             ("ip", "🌐", "Базовый скан IP", self.run_ip),
             ("shodan", "🔍", "IP + Shodan", self.run_shodan),
             ("photo", "🖼️", "Анализ фото", self.run_photo),
@@ -501,10 +512,31 @@ class OSINTApp:
                 pass
 
     def save_report(self):
+        """Сохранить структурированный отчёт последнего прогона (JSON+HTML).
+
+        Если структуры нет (ещё ничего не запускали) — падаем на дамп лога.
+        """
+        if self._last_report is not None:
+            path = filedialog.asksaveasfilename(
+                defaultextension=".html",
+                filetypes=[("HTML", "*.html"), ("JSON", "*.json")],
+                title="Сохранить отчёт (JSON+HTML)",
+            )
+            if not path:
+                return
+            try:
+                import os
+                directory = os.path.dirname(path) or "."
+                json_path, html_path = self._last_report.save(directory)
+                dual_print(f"\n[✓] Отчёт: {html_path}\n[✓] JSON:  {json_path}")
+            except Exception as e:
+                dual_print(f"\n[!] Ошибка: {e}")
+            return
+
         path = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json"), ("Все файлы", "*.*")],
-            title="Сохранить отчёт",
+            defaultextension=".txt",
+            filetypes=[("Текст", "*.txt"), ("Все файлы", "*.*")],
+            title="Сохранить лог",
         )
         if path:
             try:
@@ -545,6 +577,7 @@ class OSINTApp:
         self._stat_var.set(f"→ {label}: {arg}")
 
         def wrapper():
+            rep = report.begin(label, str(arg))
             try:
                 func(arg)
                 self._ui(lambda: self._status("Готов"))
@@ -554,6 +587,13 @@ class OSINTApp:
                 dual_print(f"\n[!] Ошибка: {e}")
                 self._ui(lambda: self._status("Ошибка", C.DANGER))
             finally:
+                report.finish()
+                self._last_report = rep
+                try:
+                    _, html_path = rep.save()
+                    dual_print(f"\n[✓] Отчёт: {html_path}")
+                except Exception as e:
+                    dual_print(f"\n[!] Отчёт не сохранён: {e}")
                 self._ui(lambda: self._stat_var.set("Готов к работе"))
 
         threading.Thread(target=wrapper, daemon=True).start()
@@ -590,6 +630,38 @@ class OSINTApp:
         t = self.get_target()
         if t:
             self.run_in_thread(analyze_discord, t, "Discord")
+
+    def run_telegram(self):
+        t = self.get_target()
+        if t:
+            self.run_in_thread(analyze_telegram_full, t, "Telegram")
+
+    def run_github(self):
+        t = self.get_target()
+        if t:
+            self.run_in_thread(analyze_github, t, "GitHub")
+
+    def run_investigate(self):
+        """Расследование сам управляет отчётами — не оборачиваем в run_in_thread."""
+        t = self.get_target()
+        if not t:
+            return
+        self._req += 1
+        self._req_value_lbl.configure(text=str(self._req))
+        self._target_value_lbl.configure(text="Расследование")
+        self._status("Выполняется: расследование", C.WARNING)
+
+        def wrapper():
+            try:
+                investigate(t)
+                self._ui(lambda: self._status("Готов"))
+            except Exception as e:
+                dual_print(f"\n[!] Ошибка: {e}")
+                self._ui(lambda: self._status("Ошибка", C.DANGER))
+            finally:
+                self._ui(lambda: self._stat_var.set("Готов к работе"))
+
+        threading.Thread(target=wrapper, daemon=True).start()
 
     def run_ip(self):
         t = self.get_target()

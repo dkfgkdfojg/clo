@@ -154,23 +154,6 @@ def analyze_photo(image_path):
             logger.debug(f"GeoSpy error: {e}")
             dual_print(f"  [!] GeoSpy: {e}")
 
-    # ---------- 3. PICARTA.AI ----------
-    def picarta():
-        try:
-            print_section("Picarta.ai")
-            with open(image_path, "rb") as f:
-                files = {"file": (os.path.basename(image_path), f, "image/jpeg")}
-                r = session.post("https://picarta.ai/upload", files=files, timeout=20)
-            if r.status_code == 200:
-                soup = BeautifulSoup(r.text, "html.parser")
-                loc = soup.select_one(".location")
-                if loc:
-                    print_field("Picarta", loc.text.strip())
-                    results["picarta"] = loc.text.strip()
-        except Exception as e:
-            logger.debug(f"Picarta error: {e}")
-            dual_print(f"  [!] Picarta: {e}")
-
     # ---------- 4. LABS.TIB.EU (GeoEstimation) ----------
     def geoestimation():
         try:
@@ -217,7 +200,6 @@ def analyze_photo(image_path):
         futures = [
             ex.submit(facecheck),
             ex.submit(geospy),
-            ex.submit(picarta),
             ex.submit(geoestimation),
             ex.submit(search4faces),
         ]

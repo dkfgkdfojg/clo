@@ -11,6 +11,16 @@ API_KEYS = {
     "EMAILREP": os.getenv("EMAILREP_API_KEY", ""),
     "INTELX": os.getenv("INTELX_API_KEY", ""),
     "NUMVERIFY": os.getenv("NUMVERIFY_API_KEY", ""),
+    # Discord: бот-токен даёт официальный /users/{id} и резолв инвайтов.
+    # Без него discord-модуль падает на скрейперы (best-effort).
+    "DISCORD_BOT_TOKEN": os.getenv("DISCORD_BOT_TOKEN", ""),
+    # Telegram: api_id/api_hash включают опциональный Telethon-тир
+    # (username<->id, phone->user, similar channels, sticker-деанон).
+    # Без них telegram-модуль работает чисто на парсинге t.me.
+    "TELEGRAM_API_ID": os.getenv("TELEGRAM_API_ID", ""),
+    "TELEGRAM_API_HASH": os.getenv("TELEGRAM_API_HASH", ""),
+    # GitHub: без токена лимит 60 запросов/час, с токеном — 5000/час.
+    "GITHUB_TOKEN": os.getenv("GITHUB_TOKEN", ""),
 }
 
 # ----- БЛЭКЛИСТЫ САЙТОВ (для фильтрации URL) -----

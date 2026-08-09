@@ -5,6 +5,9 @@
 *.log
 reports/
 
+# Telethon-сессия (содержит доступ к аккаунту!)
+.tg_session*
+
 # Python
 __pycache__/
 *.py[cod]

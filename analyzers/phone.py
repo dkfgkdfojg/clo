@@ -1,5 +1,7 @@
 # analyzers/phone.py
 import re
+import shutil
+import subprocess
 import phonenumbers
 from phonenumbers import geocoder, carrier, timezone
 from urllib.parse import quote
@@ -47,7 +49,17 @@ def analyze_phone_combo(phone_str):
         else:
             parsed = phonenumbers.parse(clean, "RU")
         if not phonenumbers.is_valid_number(parsed):
-            dual_print("  [–] Номер недействителен.")
+            possible = phonenumbers.is_possible_number(parsed)
+            print_section("Валидность")
+            print_field("Статус", "✗ НЕДЕЙСТВИТЕЛЬНЫЙ")
+            print_field(
+                "Возможный по длине",
+                "да (номер существует по формату, но не выделен оператору)"
+                if possible else "нет (неверная длина/код)",
+            )
+            e164 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+            print_field("E164", e164)
+            dual_print("  [–] Онлайн-источники пропущены: номер невалиден.")
             return
 
         region = geocoder.description_for_number(parsed, "ru") or "—"
@@ -352,6 +364,43 @@ def analyze_phone_combo(phone_str):
             logger.debug(f"NumVerify error: {e}")
             dual_print(f"  [!] NumVerify: {e}")
 
+    # 2.12 Footprint (PhoneInfoga-стиль): готовые поисковые запросы
+    def fetch_footprint():
+        print_section("Footprint (поисковые запросы)")
+        e = quote(e164)
+        n = quote(nat)
+        dorks = {
+            "Google (точный)": f"https://www.google.com/search?q=%22{e}%22",
+            "Google (соцсети)": f"https://www.google.com/search?q=%22{e}%22+OR+%22{n}%22+site:facebook.com+OR+site:vk.com+OR+site:linkedin.com",
+            "Объявления": f"https://www.google.com/search?q=%22{n}%22+site:avito.ru+OR+site:youla.ru+OR+site:olx",
+            "Утечки/пасты": f"https://www.google.com/search?q=%22{e}%22+site:pastebin.com+OR+site:t.me",
+            "WhatsApp": f"https://wa.me/{e164.lstrip('+')}",
+            "Telegram": f"https://t.me/+{e164.lstrip('+')}",
+        }
+        for label, url in dorks.items():
+            print_field(label, url)
+
+    # 2.13 ignorant: регистрация номера в соцсетях (если утилита установлена)
+    def fetch_ignorant():
+        if not shutil.which("ignorant"):
+            return
+        print_section("ignorant (регистрация в соцсетях)")
+        try:
+            out = subprocess.run(
+                ["ignorant", str(cc), str(nn), "--no-clear", "--no-color", "--only-used"],
+                capture_output=True, text=True, timeout=60,
+            ).stdout
+            used = [ln.strip() for ln in out.splitlines() if "[+]" in ln]
+            if used:
+                for ln in used[:20]:
+                    dual_print(f"    {ln}")
+                results["ignorant"] = f"{len(used)} сервисов"
+            else:
+                dual_print("  Регистраций не обнаружено.")
+        except Exception as e:
+            logger.debug(f"ignorant error: {e}")
+            dual_print(f"  [!] ignorant: {e}")
+
     # ---------- 3. ПАРАЛЛЕЛЬНЫЙ ЗАПУСК ----------
     print_section("Параллельный сбор данных...")
     funcs = [
@@ -366,6 +415,8 @@ def analyze_phone_combo(phone_str):
         fetch_callapp,
         fetch_hlr,  # новая
         fetch_numverify,  # новая (будет пропущена, если нет ключа)
+        fetch_footprint,
+        fetch_ignorant,
     ]
     with ThreadPoolExecutor(max_workers=len(funcs)) as ex:
         futs = [ex.submit(f) for f in funcs]
