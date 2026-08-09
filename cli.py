@@ -21,6 +21,8 @@ from analyzers.github import analyze_github
 from analyzers.ip import analyze_ip_basic, analyze_shodan_smart
 from analyzers.domain import analyze_domain
 from analyzers.photo import analyze_photo
+from analyzers.card import analyze_card
+from analyzers.crypto import analyze_crypto
 from analyzers.investigate import investigate
 from core import report
 
@@ -35,6 +37,8 @@ MODULES = {
     "shodan": (analyze_shodan_smart, "Shodan"),
     "domain": (analyze_domain, "Домен"),
     "photo": (analyze_photo, "Фото"),
+    "card": (analyze_card, "Карта"),
+    "crypto": (analyze_crypto, "Крипто"),
 }
 
 

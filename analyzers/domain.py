@@ -91,6 +91,40 @@ def _fetch_crtsh_json(session, domain, results):
         dual_print("  [–] Ничего не найдено")
 
 
+def _fetch_extra_subdomains(session, domain, results):
+    """Доп. источники сабдоменов: hackertarget + threatminer. Объединяем и дедупим."""
+    print_section("Сабдомены (hackertarget + threatminer)")
+    subs = set()
+    # hackertarget: CSV "host,ip" (free-лимит ~50/день)
+    try:
+        r = safe_get(session, f"https://api.hackertarget.com/hostsearch/?q={domain}", timeout=15)
+        if r.status_code == 200 and "API count exceeded" not in r.text:
+            for line in r.text.splitlines():
+                host = line.split(",")[0].strip().lower()
+                if host.endswith(domain):
+                    subs.add(host)
+    except Exception as e:
+        logger.debug("hackertarget: %s", e)
+    # threatminer: JSON
+    try:
+        r = safe_get(session, f"https://api.threatminer.org/v2/domain.php?q={domain}&rt=5", timeout=15)
+        if r.status_code == 200:
+            for host in r.json().get("results", []):
+                host = str(host).strip().lower()
+                if host.endswith(domain):
+                    subs.add(host)
+    except Exception as e:
+        logger.debug("threatminer: %s", e)
+
+    if subs:
+        dual_print(f"  Уникальных поддоменов: {len(subs)}")
+        for s in sorted(subs)[:40]:
+            dual_print(f"    • {s}")
+        results["Поддоменов (доп.)"] = len(subs)
+    else:
+        dual_print("  [–] Ничего не найдено")
+
+
 def _fetch_urlscan(session, domain, results):
     """urlscan.io — публичные сканы домена: связанные IP, страны, скриншоты."""
     print_section("urlscan.io")
@@ -184,6 +218,7 @@ def analyze_domain(domain):
             ex.submit(_fetch_rdap, session, domain, results),
             ex.submit(_fetch_dns, session, domain, results),
             ex.submit(_fetch_crtsh_json, session, domain, results),
+            ex.submit(_fetch_extra_subdomains, session, domain, results),
             ex.submit(_fetch_urlscan, session, domain, results),
             ex.submit(_fetch_wayback, session, domain, results),
         ]

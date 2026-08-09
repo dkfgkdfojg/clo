@@ -22,6 +22,8 @@ from analyzers.photo import analyze_photo
 from analyzers.domain import analyze_domain
 from analyzers.telegram import analyze_telegram_full
 from analyzers.github import analyze_github
+from analyzers.card import analyze_card
+from analyzers.crypto import analyze_crypto
 from analyzers.investigate import investigate
 from core.utils import dual_print
 from core import report
@@ -71,6 +73,7 @@ EXAMPLES = {
     "telegram": "@durov", "discord": "267624335836053506", "github": "torvalds",
     "domain": "example.com", "ip": "8.8.8.8", "shodan": "8.8.8.8",
     "photo": "файл фото…", "investigate": "john@example.com",
+    "card": "45717360", "crypto": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
 }
 
 # Разделы бокового меню: (заголовок, [(key, иконка, подпись, отступ, бейдж)]).
@@ -89,6 +92,10 @@ NAV = [
         ("domain", "🌐", "Домен", False, None),
         ("ip", "🖥️", "IP-адрес", False, None),
         ("shodan", "🛰️", "IP + Шодан", True, ("API", C.WARNING)),
+    ]),
+    ("ФИНАНСЫ", [
+        ("card", "💳", "Банковская карта", False, None),
+        ("crypto", "🪙", "Крипто-адрес", False, None),
     ]),
     ("СМИ", [
         ("photo", "🖼️", "Фото", False, None),
@@ -597,6 +604,16 @@ class OSINTApp:
         t = self.get_target()
         if t:
             self.run_in_thread(analyze_domain, t, "Домен")
+
+    def run_card(self):
+        t = self.get_target()
+        if t:
+            self.run_in_thread(analyze_card, t, "Карта")
+
+    def run_crypto(self):
+        t = self.get_target()
+        if t:
+            self.run_in_thread(analyze_crypto, t, "Крипто")
 
     def run_investigate(self):
         """Расследование само пишет сводный отчёт — без обёртки run_in_thread."""
