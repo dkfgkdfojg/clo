@@ -7,6 +7,22 @@ webdriver-manager>=3.8.0
 python-dotenv>=0.21.0
 customtkinter>=5.2.0
 Pillow>=9.5.0
+reportlab>=4.0.0
+
+# опционально: включает Telethon-тир в analyzers/telegram.py
+# (username<->id, phone->user, similar channels). Без него — чистый парсинг t.me.
+telethon>=1.34.0
+
+# Внешние OSINT-утилиты, которые оркеструет core/osint_runner.py.
+# Ставятся как обычные пакеты и дают команды sherlock/maigret/holehe/socialscan.
+sherlock-project>=0.15.0
+maigret>=0.6.0
+holehe>=1.61
+socialscan>=2.0.0
+ignorant>=1.2.0
+# Не на pip (ставить вручную при необходимости):
+#   blackbird — git clone https://github.com/p1ngul1n0/blackbird
+#   mosint    — go install github.com/alpkeskin/mosint/v3/cmd/mosint@latest
 
 # dev
 pytest>=7.0.0

@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.http import get_session, safe_get
 from core.utils import dual_print, print_section, print_field, print_summary, logger
+from core.cache import cached_json
 from config import API_KEYS
 
 
@@ -307,9 +308,37 @@ def analyze_ip_basic(ip_address_str):
             logger.debug(f"Check-Host error: {e}")
             dual_print(f"  [!] Check-Host: {e}")
 
+    def fetch_internetdb():
+        """Shodan InternetDB — открытые порты, хосты, теги, CVE. Без ключа."""
+        try:
+            print_section("Shodan InternetDB")
+            d = cached_json(session, f"https://internetdb.shodan.io/{ip_address_str}",
+                            ttl=3600, timeout=12)
+            if not d:
+                dual_print("  [–] Нет данных в InternetDB.")
+                return
+            ports = d.get("ports", [])
+            if ports:
+                print_field("Открытые порты", ", ".join(str(p) for p in ports))
+                results["Открытые порты"] = ", ".join(str(p) for p in ports)
+            if d.get("hostnames"):
+                print_field("Хосты", ", ".join(d["hostnames"]))
+            if d.get("tags"):
+                print_field("Теги", ", ".join(d["tags"]))
+            if d.get("cpes"):
+                print_field("CPE (софт)", ", ".join(d["cpes"][:8]))
+            vulns = d.get("vulns", [])
+            if vulns:
+                print_field("Уязвимости (CVE)", ", ".join(vulns[:15]))
+                results["CVE"] = ", ".join(vulns[:15])
+        except Exception as e:
+            logger.debug(f"InternetDB error: {e}")
+            dual_print(f"  [!] InternetDB: {e}")
+
     # ---------- ПАРАЛЛЕЛЬНЫЙ ЗАПУСК ----------
     print_section("Параллельный сбор данных...")
     funcs = [
+        fetch_internetdb,
         fetch_ipwho,
         fetch_ipapi,
         fetch_ipinfo,

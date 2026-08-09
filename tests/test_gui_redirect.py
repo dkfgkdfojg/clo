@@ -16,7 +16,7 @@ import pytest
 
 tk = pytest.importorskip("tkinter")
 
-from gui.redirect import RedirectText  # noqa: E402
+from gui.console.redirect import RedirectText  # noqa: E402
 
 
 @pytest.fixture

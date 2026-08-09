@@ -191,6 +191,29 @@ class UsernameEndpoints:
     chess: str = "https://www.chess.com/member/{username}"
     lichess: str = "https://lichess.org/@/{username}"
 
+    # --- Дополнительно ---
+    threads: str = "https://www.threads.net/@{username}"
+    snapchat: str = "https://www.snapchat.com/add/{username}"
+    tiktok: str = "https://www.tiktok.com/@{username}"
+    mastodon_social: str = "https://mastodon.social/@{username}"
+    vsco: str = "https://vsco.co/{username}"
+    wattpad: str = "https://www.wattpad.com/user/{username}"
+    goodreads: str = "https://www.goodreads.com/{username}"
+    letterboxd: str = "https://letterboxd.com/{username}"
+    myanimelist: str = "https://myanimelist.net/profile/{username}"
+    namemc: str = "https://namemc.com/profile/{username}"
+    roblox_search: str = "https://www.roblox.com/search/users?keyword={username}"
+    tryhackme: str = "https://tryhackme.com/p/{username}"
+    hackthebox: str = "https://app.hackthebox.com/users/{username}"
+    npm: str = "https://www.npmjs.com/~{username}"
+    pypi: str = "https://pypi.org/user/{username}/"
+    dockerhub: str = "https://hub.docker.com/u/{username}"
+    kofi: str = "https://ko-fi.com/{username}"
+    buymeacoffee: str = "https://www.buymeacoffee.com/{username}"
+    gumroad: str = "https://{username}.gumroad.com"
+    itchio: str = "https://{username}.itch.io"
+    sketchfab: str = "https://sketchfab.com/{username}"
+
 
 # ---------------------------------------------------------------------------
 # Error-page detection

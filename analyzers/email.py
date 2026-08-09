@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.http import get_session, safe_get
 from core.utils import dual_print, print_section, print_field, print_summary, logger
 from core.cli_runner import run_external_tool_with_parser
+from core.verify import check_email
 from config import API_KEYS
 
 
@@ -36,6 +37,32 @@ def analyze_email_leaks(target):
 
     session = get_session()
     results = {}
+
+    # ---------- ВАЛИДНОСТЬ (синтаксис + MX + признаки) ----------
+    print_section("Валидность")
+    v = check_email(target, session)
+    if not v["syntax_valid"]:
+        print_field("Синтаксис", "✗ некорректный")
+        results["Email валиден"] = "нет (синтаксис)"
+    else:
+        print_field("Синтаксис", "✓ ок")
+        print_field("Домен", v["domain"])
+        print_field("MX-записи", ", ".join(v["mx_hosts"]) if v["mx_hosts"] else "нет")
+        if not v["has_mx"]:
+            print_field("A-запись домена", "есть" if v["has_a"] else "нет")
+        print_field(
+            "Доставляемость",
+            "✓ домен принимает почту" if v["deliverable"] else "✗ домен не принимает почту",
+        )
+        if v["is_disposable"]:
+            print_field("Одноразовый", "⚠ ДА (temp-mail)")
+        if v["is_role"]:
+            print_field("Ролевой ящик", "да (служебный, не личный)")
+        if v["is_free"]:
+            print_field("Провайдер", "бесплатный публичный")
+        results["Email валиден"] = "да" if v["deliverable"] else "домен без почты"
+        if v["is_disposable"]:
+            results["Одноразовый"] = "да"
 
     # ---------- GRAVATAR ----------
     def fetch_gravatar():
