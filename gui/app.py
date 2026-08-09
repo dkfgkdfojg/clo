@@ -30,7 +30,7 @@ from core.utils import dual_print
 from core import report
 from core import notes
 
-from gui.redirect import RedirectText
+from gui.console import ConsolePanel
 
 
 def pick_font(preferred, fallback):
@@ -149,7 +149,7 @@ class OSINTApp:
         self._build_layout()
 
         self._orig_stdout = sys.stdout
-        self._redirect = RedirectText(self.text_area, root=self.root)
+        self._redirect = self._console.redirect
         sys.stdout = self._redirect
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -428,46 +428,9 @@ class OSINTApp:
 
     # ----------------- Console -----------------
     def _build_console(self, parent):
-        wrap = ctk.CTkFrame(parent, fg_color=C.CARD, corner_radius=14,
-                            border_width=1, border_color=C.BORDER)
-        wrap.grid(row=1, column=0, sticky="nsew")
-        wrap.grid_columnconfigure(0, weight=1)
-        wrap.grid_rowconfigure(1, weight=1)
-
-        bar = ctk.CTkFrame(wrap, fg_color="transparent", height=34)
-        bar.grid(row=0, column=0, sticky="ew", padx=16, pady=(10, 0))
-        ctk.CTkLabel(bar, text="●  Консоль", text_color=C.MUTED,
-                     font=(self.font_ui, 10, "bold")).pack(side="left")
-        self._lines_var = tk.StringVar(value="строк: 0")
-        ctk.CTkLabel(bar, textvariable=self._lines_var, text_color=C.MUTED2,
-                     font=(self.font_ui, 9)).pack(side="right")
-
-        holder = ctk.CTkFrame(wrap, fg_color=C.BG, corner_radius=10)
-        holder.grid(row=1, column=0, sticky="nsew", padx=16, pady=16)
-        holder.grid_columnconfigure(0, weight=1)
-        holder.grid_rowconfigure(0, weight=1)
-
-        sb = ctk.CTkScrollbar(holder, fg_color=C.BG, button_color=C.BORDER,
-                              button_hover_color=C.MUTED2)
-        sb.grid(row=0, column=1, sticky="ns", pady=10, padx=(0, 8))
-
-        self.text_area = tk.Text(
-            holder, bg=C.BG, fg=C.TEXT, insertbackground=C.PRIMARY,
-            selectbackground=C.BORDER, font=(self.font_mono, 11), relief=tk.FLAT,
-            padx=14, pady=10, state=tk.DISABLED, wrap=tk.WORD,
-            highlightthickness=0, yscrollcommand=sb.set,
-        )
-        self.text_area.grid(row=0, column=0, sticky="nsew", padx=(2, 0), pady=2)
-        sb.configure(command=self.text_area.yview)
-        self.text_area.bind("<<Modified>>", self._upd_lines)
-
-    def _upd_lines(self, e=None):
-        try:
-            n = int(self.text_area.index("end-1c").split(".")[0])
-            self._lines_var.set(f"строк: {n}")
-        except Exception:
-            pass
-        self.text_area.edit_modified(False)
+        self._console = ConsolePanel(parent, C, self.font_ui, self.font_mono, self.root)
+        self._console.frame.grid(row=1, column=0, sticky="nsew")
+        self.text_area = self._console.text_area
 
     def _banner(self):
         print("  Recon · OSINT toolkit\n"
@@ -541,9 +504,7 @@ class OSINTApp:
         dual_print("\n[!] Нечего экспортировать — сначала запустите модуль.")
 
     def clear_console(self):
-        self.text_area.config(state=tk.NORMAL)
-        self.text_area.delete(1.0, tk.END)
-        self.text_area.config(state=tk.DISABLED)
+        self._console.clear()
         if self.active_key and self.active_key in self._nav_btns:
             self._set_nav_state(self.active_key, False)
             self.active_key = None

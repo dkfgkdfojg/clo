@@ -270,6 +270,67 @@ def _telethon_username(client, username: str, results: dict) -> None:
         except Exception as exc:
             logger.debug("recommendations: %s", exc)
 
+    _telethon_gifts(client, ent, results)
+
+
+def _telethon_gifts(client, entity, results: dict) -> None:
+    """Подарки профиля и связь по отправителям.
+
+    Публичные звёздные подарки на профиле нередко подписаны отправителем —
+    это готовые связи между аккаунтами. Аноним/скрытые пропускаем.
+    """
+    from collections import Counter
+    from telethon.tl import functions
+
+    fn = getattr(getattr(functions, "payments", None), "GetSavedStarGiftsRequest", None)
+    if fn is None:
+        return  # версия Telethon без star gifts — молча пропускаем
+    print_section("Подарки (связь по отправителям)")
+    try:
+        res = client(fn(peer=entity, offset="", limit=100))
+    except Exception as exc:
+        dual_print(f"  [!] gifts: {exc}")
+        return
+
+    gifts = getattr(res, "gifts", []) or []
+    if not gifts:
+        dual_print("  [–] Подарков нет или скрыты настройками.")
+        return
+
+    total_stars = 0
+    senders: Counter = Counter()
+    anon = 0
+    for g in gifts:
+        star = getattr(getattr(g, "gift", None), "stars", 0) or 0
+        total_stars += star
+        frm = getattr(g, "from_id", None)
+        uid = getattr(frm, "user_id", None)
+        if uid:
+            senders[uid] += 1
+        elif getattr(g, "name_hidden", False) or frm is None:
+            anon += 1
+
+    print_field("Подарков всего", len(gifts))
+    if total_stars:
+        print_field("Сумма звёзд", total_stars)
+    if anon:
+        print_field("Анонимных", anon)
+    results["Подарков"] = str(len(gifts))
+
+    if senders:
+        dual_print("  Отправители (связи):")
+        for uid, cnt in senders.most_common(15):
+            label = str(uid)
+            try:
+                s = client.get_entity(uid)
+                label = f"@{s.username}" if getattr(s, "username", None) else \
+                    " ".join(x for x in (getattr(s, "first_name", ""),
+                                         getattr(s, "last_name", "")) if x) or str(uid)
+            except Exception:
+                pass
+            dual_print(f"    ← {label}: {cnt} подарк(ов)")
+        results["Дарителей"] = str(len(senders))
+
 
 def _telethon_phone(client, phone: str, results: dict) -> None:
     from telethon.tl import types
