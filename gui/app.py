@@ -85,6 +85,31 @@ class C:
     }
 
 
+# Метаданные модулей: иконка, название, краткое описание, пример ввода.
+MODULE_META = {
+    "username": ("👤", "Username", "Ник на 90+ сайтах + sherlock/maigret/holehe", "john_doe"),
+    "email": ("✉️", "Email", "Валидность (MX), утечки, Gravatar, привязки", "john@example.com"),
+    "phone": ("📱", "Телефон", "Оператор, регион, валидность, footprint, ignorant", "+79261234567"),
+    "telegram": ("✈️", "Telegram", "Профиль/канал t.me, посты, репосты, Telethon", "@durov"),
+    "discord": ("💬", "Discord", "Snowflake, официальный API, бейджи, инвайты", "267624335836053506"),
+    "github": ("🐙", "GitHub", "Профиль, репо, ключи, e-mail из коммитов", "torvalds"),
+    "domain": ("🌐", "Домен", "RDAP, DNS, сабдомены (CT), urlscan, Wayback", "example.com"),
+    "ip": ("📡", "IP-адрес", "Гео, ASN, InternetDB (порты/CVE), abuse", "8.8.8.8"),
+    "shodan": ("🔍", "IP + Shodan", "Расширенный скан IP через Shodan", "8.8.8.8"),
+    "photo": ("🖼️", "Фото", "EXIF, GPS-координаты, гео-сервисы", "путь к файлу…"),
+    "investigate": ("🔗", "Расследование", "Авто-пивотинг между модулями + граф связей", "john@example.com"),
+}
+
+# Группировка модулей в боковом меню.
+SECTIONS = [
+    ("ЛИЧНОСТЬ", ["username", "email", "phone"]),
+    ("МЕССЕНДЖЕРЫ", ["telegram", "discord"]),
+    ("КОД И СЕТЬ", ["github", "domain", "ip", "shodan"]),
+    ("МЕДИА", ["photo"]),
+    ("СВОДНОЕ", ["investigate"]),
+]
+
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -182,78 +207,90 @@ class OSINTApp:
             anchor="w",
         ).pack(anchor="w")
 
+        # Нижние элементы прибиваем к низу до скролла, иначе скролл их вытеснит.
+        footer = ctk.CTkFrame(side, fg_color="transparent")
+        footer.pack(side="bottom", fill="x", padx=22, pady=(10, 16))
         ctk.CTkLabel(
-            side,
-            text="МОДУЛИ",
-            text_color=C.MUTED2,
-            font=(self.font_ui, 10, "bold"),
-            anchor="w",
-        ).pack(fill="x", padx=24, pady=(6, 8))
-
-        self._nav_btns = {}
-        # СПИСОК МОДУЛЕЙ (без card, crypto, vehicle, geoint)
-        modules = [
-            ("phone", "📱", "Анализ телефона", self.run_phone),
-            ("username", "👤", "Анализ username", self.run_username),
-            ("email", "✉️", "Анализ Email", self.run_email),
-            ("discord", "💬", "Discord ID", self.run_discord),
-            ("telegram", "✈️", "Telegram", self.run_telegram),
-            ("github", "🐙", "GitHub", self.run_github),
-            ("investigate", "🔗", "Расследование", self.run_investigate),
-            ("ip", "🌐", "Базовый скан IP", self.run_ip),
-            ("shodan", "🔍", "IP + Shodan", self.run_shodan),
-            ("photo", "🖼️", "Анализ фото", self.run_photo),
-            ("domain", "🌐", "Домен", self.run_domain),  # если оставляете
-        ]
-        for key, icon, label, cmd in modules:
-            self._nav_btns[key] = self._make_nav_button(side, key, icon, label, cmd)
-
-        ctk.CTkFrame(side, fg_color=C.BORDER_SOFT, height=1).pack(
-            fill="x", padx=22, pady=18
-        )
+            footer, text="⬡ Arch Linux · clo v3", text_color=C.MUTED2,
+            font=(self.font_mono, 9),
+        ).pack(anchor="w")
 
         self._stat_var = tk.StringVar(value="Готов к работе")
         ctk.CTkLabel(
-            side,
-            textvariable=self._stat_var,
-            text_color=C.MUTED,
-            font=(self.font_mono, 10),
-            anchor="w",
-            justify="left",
-            wraplength=200,
-        ).pack(fill="x", padx=24)
+            side, textvariable=self._stat_var, text_color=C.MUTED,
+            font=(self.font_mono, 10), anchor="w", justify="left", wraplength=210,
+        ).pack(side="bottom", fill="x", padx=24, pady=(0, 6))
 
-        footer = ctk.CTkFrame(side, fg_color="transparent")
-        footer.pack(side="bottom", fill="x", padx=22, pady=18)
-        ctk.CTkLabel(
-            footer, text="⬡ Arch Linux", text_color=C.MUTED2, font=(self.font_mono, 9)
-        ).pack(anchor="w")
-
-    def _make_nav_button(self, parent, key, icon, label, cmd):
-        accent = C.MODULES[key]
-        btn = ctk.CTkButton(
-            parent,
-            text=f"{icon}   {label}",
-            anchor="w",
-            corner_radius=10,
-            height=42,
-            fg_color="transparent",
-            hover_color=C.SURFACE2,
-            text_color=C.MUTED,
-            font=(self.font_ui, 12),
-            command=lambda: self._activate(key, cmd),
+        ctk.CTkFrame(side, fg_color=C.BORDER_SOFT, height=1).pack(
+            side="bottom", fill="x", padx=22, pady=10
         )
-        btn.pack(fill="x", padx=14, pady=3)
-        btn._accent = accent
-        return btn
+
+        nav = ctk.CTkScrollableFrame(side, fg_color="transparent")
+        nav.pack(fill="both", expand=True, padx=2, pady=(4, 0))
+
+        self._nav_btns = {}
+        for title, keys in SECTIONS:
+            ctk.CTkLabel(
+                nav, text=title, text_color=C.MUTED2,
+                font=(self.font_ui, 9, "bold"), anchor="w",
+            ).pack(fill="x", padx=18, pady=(12, 4))
+            for key in keys:
+                self._nav_btns[key] = self._make_nav_button(nav, key)
+
+    def _make_nav_button(self, parent, key):
+        icon, title, desc, _ = MODULE_META[key]
+        accent = C.MODULES[key]
+        cmd = getattr(self, f"run_{key}")
+
+        card = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=10)
+        card.pack(fill="x", padx=8, pady=2)
+
+        bar = ctk.CTkFrame(card, fg_color="transparent", width=3, corner_radius=2)
+        bar.pack(side="left", fill="y", padx=(3, 7), pady=6)
+        ico = ctk.CTkLabel(card, text=icon, font=(self.font_ui, 15), width=24)
+        ico.pack(side="left")
+        box = ctk.CTkFrame(card, fg_color="transparent")
+        box.pack(side="left", fill="x", expand=True, padx=(4, 8), pady=6)
+        t_lbl = ctk.CTkLabel(
+            box, text=title, anchor="w", text_color=C.MUTED,
+            font=(self.font_ui, 12, "bold"),
+        )
+        t_lbl.pack(anchor="w")
+        d_lbl = ctk.CTkLabel(
+            box, text=desc, anchor="w", text_color=C.MUTED2,
+            font=(self.font_ui, 9), wraplength=150, justify="left",
+        )
+        d_lbl.pack(anchor="w")
+
+        entry = {"card": card, "bar": bar, "title": t_lbl, "accent": accent}
+        for w in (card, bar, ico, box, t_lbl, d_lbl):
+            w.bind("<Button-1>", lambda e, k=key, c=cmd: self._activate(k, c))
+            w.bind("<Enter>", lambda e, k=key: self._nav_hover(k, True))
+            w.bind("<Leave>", lambda e, k=key: self._nav_hover(k, False))
+        return entry
+
+    def _nav_hover(self, key, on):
+        if key == self.active_key:
+            return
+        self._nav_btns[key]["card"].configure(fg_color=C.SURFACE2 if on else "transparent")
+
+    def _set_nav_state(self, key, active):
+        e = self._nav_btns[key]
+        e["card"].configure(fg_color=C.PRIMARY_SOFT if active else "transparent")
+        e["bar"].configure(fg_color=e["accent"] if active else "transparent")
+        e["title"].configure(text_color=C.TEXT if active else C.MUTED)
 
     def _activate(self, key, cmd):
         if self.active_key and self.active_key in self._nav_btns:
-            old = self._nav_btns[self.active_key]
-            old.configure(fg_color="transparent", text_color=C.MUTED)
+            self._set_nav_state(self.active_key, False)
         self.active_key = key
-        btn = self._nav_btns[key]
-        btn.configure(fg_color=C.PRIMARY_SOFT, text_color=C.TEXT)
+        self._set_nav_state(key, True)
+        # подсказка + пример в поле ввода под активный модуль
+        icon, title, desc, example = MODULE_META[key]
+        if hasattr(self, "_hint_var"):
+            self._hint_var.set(f"{icon}  {title} — {desc}")
+        if hasattr(self, "entry_target"):
+            self.entry_target.configure(placeholder_text=f"напр.: {example}")
         cmd()
 
     # ----------------- Header -----------------
@@ -292,42 +329,37 @@ class OSINTApp:
         self.entry_target.grid(row=0, column=1, sticky="ew", padx=(0, 14))
         self.entry_target.bind("<Return>", self._on_enter)
 
-        for text, color, hover, cmd in [
-            ("💾 Сохранить", C.SURFACE2, C.SUCCESS, self.save_report),
-            ("🗑 Очистить", C.SURFACE2, C.DANGER, self.clear_console),
-        ]:
-            ctk.CTkButton(
-                header,
-                text=text,
-                width=128,
-                height=44,
-                corner_radius=12,
-                fg_color=color,
-                hover_color=hover,
-                text_color=C.TEXT,
-                font=(self.font_ui, 11, "bold"),
-                command=cmd,
-            ).grid(
-                row=0,
-                column=len(header.grid_slaves(row=0)) + 1,
-                padx=(0, 0) if text.startswith("🗑") else (0, 12),
-            )
+        self._go_btn = ctk.CTkButton(
+            header, text="▶ Запуск", width=118, height=44, corner_radius=12,
+            fg_color=C.PRIMARY, hover_color=C.PRIMARY_HOVER, text_color="#FFFFFF",
+            font=(self.font_ui, 12, "bold"), command=self._on_enter,
+        )
+        self._go_btn.grid(row=0, column=1, padx=(0, 10))
+        ctk.CTkButton(
+            header, text="💾", width=48, height=44, corner_radius=12,
+            fg_color=C.SURFACE2, hover_color=C.SUCCESS, text_color=C.TEXT,
+            font=(self.font_ui, 14), command=self.save_report,
+        ).grid(row=0, column=2, padx=(0, 8))
+        ctk.CTkButton(
+            header, text="🗑", width=48, height=44, corner_radius=12,
+            fg_color=C.SURFACE2, hover_color=C.DANGER, text_color=C.TEXT,
+            font=(self.font_ui, 14), command=self.clear_console,
+        ).grid(row=0, column=3)
+
+        # строка-подсказка под полем: что делает активный модуль
+        self._hint_var = tk.StringVar(value="Выберите модуль слева, введите цель и нажмите «Запуск»")
+        ctk.CTkLabel(
+            header, textvariable=self._hint_var, text_color=C.MUTED,
+            font=(self.font_ui, 11), anchor="w",
+        ).grid(row=1, column=0, columnspan=4, sticky="ew", pady=(8, 0), padx=2)
 
     def _on_enter(self, event=None):
         if not self.active_key:
+            self._status("Сначала выберите модуль слева", C.WARNING)
             return
-        methods = {
-            "phone": self.run_phone,
-            "username": self.run_username,
-            "email": self.run_email,
-            "discord": self.run_discord,
-            "ip": self.run_ip,
-            "shodan": self.run_shodan,
-            "photo": self.run_photo,
-            "domain": self.run_domain,
-        }
-        if self.active_key in methods:
-            methods[self.active_key]()
+        run = getattr(self, f"run_{self.active_key}", None)
+        if run:
+            run()
 
     # ----------------- Stat cards -----------------
     def _build_stat_cards(self, parent):
@@ -554,9 +586,7 @@ class OSINTApp:
         self.text_area.delete(1.0, tk.END)
         self.text_area.config(state=tk.DISABLED)
         if self.active_key and self.active_key in self._nav_btns:
-            self._nav_btns[self.active_key].configure(
-                fg_color="transparent", text_color=C.MUTED
-            )
+            self._set_nav_state(self.active_key, False)
             self.active_key = None
         self._target_value_lbl.configure(text="—")
         self._banner()
