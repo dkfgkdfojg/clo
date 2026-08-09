@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.http import get_session, safe_get
 from core.utils import dual_print, print_section, print_field, print_summary, logger
+from core.cache import cached_json
 from config import API_KEYS
 
 
@@ -311,14 +312,11 @@ def analyze_ip_basic(ip_address_str):
         """Shodan InternetDB — открытые порты, хосты, теги, CVE. Без ключа."""
         try:
             print_section("Shodan InternetDB")
-            r = safe_get(session, f"https://internetdb.shodan.io/{ip_address_str}", timeout=12)
-            if r.status_code == 404:
+            d = cached_json(session, f"https://internetdb.shodan.io/{ip_address_str}",
+                            ttl=3600, timeout=12)
+            if not d:
                 dual_print("  [–] Нет данных в InternetDB.")
                 return
-            if r.status_code != 200:
-                dual_print(f"  [!] InternetDB: {r.status_code}")
-                return
-            d = r.json()
             ports = d.get("ports", [])
             if ports:
                 print_field("Открытые порты", ", ".join(str(p) for p in ports))

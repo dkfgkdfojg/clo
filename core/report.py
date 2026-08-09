@@ -123,6 +123,64 @@ class Report:
             pass
         return json_path, html_path
 
+    def save_pdf(self, path: Path | str) -> Path:
+        """Экспорт отчёта в PDF (reportlab). Кириллица через DejaVuSans."""
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.lib import colors
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+        font = "Helvetica"
+        for fp in ("/usr/share/fonts/TTF/DejaVuSans.ttf",
+                   "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+                   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+            if Path(fp).exists():
+                pdfmetrics.registerFont(TTFont("DejaVu", fp))
+                font = "DejaVu"
+                break
+
+        path = Path(path)
+        d = self.to_dict()
+        styles = getSampleStyleSheet()
+        h1 = ParagraphStyle("h1", parent=styles["Title"], fontName=font, fontSize=16)
+        h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontName=font,
+                            fontSize=12, textColor=colors.HexColor("#5b4bd6"))
+        norm = ParagraphStyle("n", parent=styles["Normal"], fontName=font, fontSize=9)
+
+        story = [Paragraph(f"{d['kind']} — {d['target']}", h1),
+                 Paragraph(f"{d['started_at']} · {d['duration_sec']} c", norm),
+                 Spacer(1, 8 * mm)]
+
+        def esc(s):
+            return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+                    .replace(">", "&gt;"))
+
+        for summ in d["summaries"]:
+            if not summ["items"]:
+                continue
+            story.append(Paragraph(esc(summ["title"]), h2))
+            rows = [[esc(k), esc(v)] for k, v in summ["items"].items()]
+            story.append(_pdf_table(rows, font, colors))
+            story.append(Spacer(1, 5 * mm))
+
+        for sec in d["sections"]:
+            if not sec["fields"] and not sec["notes"]:
+                continue
+            story.append(Paragraph(esc(sec["title"]), h2))
+            if sec["fields"]:
+                rows = [[esc(f["label"]), esc(f["value"])] for f in sec["fields"]]
+                story.append(_pdf_table(rows, font, colors))
+            for n in sec["notes"]:
+                story.append(Paragraph("• " + esc(n), norm))
+            story.append(Spacer(1, 4 * mm))
+
+        SimpleDocTemplate(str(path), pagesize=A4,
+                          title=f"{d['kind']} {d['target']}").build(story)
+        return path
+
     def _render_html(self) -> str:
         d = self.to_dict()
         e = html.escape
@@ -192,6 +250,26 @@ a{{color:var(--accent);text-decoration:none}}a:hover{{text-decoration:underline}
 <header><h1><span class="tag">{kind}</span> — {target}</h1>
 <div class="meta">{started} · {dur} c</div></header>
 """
+
+
+def _pdf_table(rows, font, colors):
+    """Двухколоночная таблица label/value для PDF."""
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+
+    cell = ParagraphStyle("cell", fontName=font, fontSize=9, leading=11)
+    data = [[Paragraph(str(a), cell), Paragraph(str(b), cell)] for a, b in rows]
+    t = Table(data, colWidths=[55 * mm, 110 * mm])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#666666")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.4, colors.HexColor("#e0e0e0")),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    return t
 
 
 def build_index(directory: Path | str = REPORTS_DIR) -> Path:

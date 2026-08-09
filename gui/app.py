@@ -24,9 +24,11 @@ from analyzers.telegram import analyze_telegram_full
 from analyzers.github import analyze_github
 from analyzers.card import analyze_card
 from analyzers.crypto import analyze_crypto
+from analyzers.face import analyze_face
 from analyzers.investigate import investigate
 from core.utils import dual_print
 from core import report
+from core import notes
 
 from gui.redirect import RedirectText
 
@@ -74,6 +76,7 @@ EXAMPLES = {
     "domain": "example.com", "ip": "8.8.8.8", "shodan": "8.8.8.8",
     "photo": "файл фото…", "investigate": "john@example.com",
     "card": "45717360", "crypto": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+    "face": "https://site.com/photo.jpg",
 }
 
 # Разделы бокового меню: (заголовок, [(key, иконка, подпись, отступ, бейдж)]).
@@ -99,6 +102,7 @@ NAV = [
     ]),
     ("СМИ", [
         ("photo", "🖼️", "Фото", False, None),
+        ("face", "🧿", "Реверс по фото", False, None),
     ]),
 ]
 
@@ -313,6 +317,27 @@ class OSINTApp:
             anchor="w", font=(self.font_ui, 11))
         self._target_sub_lbl.pack(anchor="w")
 
+        chips = ctk.CTkFrame(col, fg_color="transparent")
+        chips.pack(anchor="w", fill="x", pady=(5, 0))
+        self._conf_lbl = ctk.CTkLabel(chips, text="", text_color=C.MUTED2,
+                                      font=(self.font_ui, 10, "bold"))
+        self._conf_lbl.pack(side="left")
+        self._tags_lbl = ctk.CTkLabel(chips, text="", text_color=C.INFO,
+                                      font=(self.font_ui, 10))
+        self._tags_lbl.pack(side="left", padx=(10, 0))
+
+        note_row = ctk.CTkFrame(col, fg_color="transparent")
+        note_row.pack(anchor="w", fill="x", pady=(6, 0))
+        self._note_entry = ctk.CTkEntry(
+            note_row, placeholder_text="заметка или #тег…", fg_color=C.SURFACE2,
+            border_width=0, text_color=C.TEXT, placeholder_text_color=C.MUTED2,
+            font=(self.font_ui, 10), height=28)
+        self._note_entry.pack(side="left", fill="x", expand=True)
+        self._note_entry.bind("<Return>", lambda e: self._add_note())
+        ctk.CTkButton(note_row, text="＋", width=30, height=28, corner_radius=8,
+                      fg_color=C.SURFACE2, hover_color=C.PRIMARY_SOFT,
+                      text_color=C.TEXT, command=self._add_note).pack(side="left", padx=(6, 0))
+
     def _build_actions_card(self, parent):
         body = self._card(parent, "Быстрые действия")
         actions = (("🔎  В дело", self.run_investigate),
@@ -374,6 +399,32 @@ class OSINTApp:
         self._avatar.configure(text=initials)
         self._target_value_lbl.configure(text=target)
         self._target_sub_lbl.configure(text=f"{label} · {matches} совпадений")
+        mark, pct = notes.confidence(matches)
+        color = {"высокая": C.SUCCESS, "средняя": C.WARNING}.get(mark, C.MUTED)
+        self._conf_lbl.configure(text=f"уверенность: {mark} {pct}%", text_color=color)
+        self._refresh_notes(target)
+
+    def _refresh_notes(self, target):
+        data = notes.get(target)
+        tags = " ".join(f"#{t}" for t in data.get("tags", []))
+        n = len(data.get("notes", []))
+        self._tags_lbl.configure(text=(tags + (f"  · заметок: {n}" if n else "")).strip())
+
+    def _add_note(self):
+        target = self.entry_target.get().strip() or self._target_value_lbl.cget("text")
+        if not target or target == "цель не выбрана":
+            self._status("Нет цели для заметки", C.WARNING)
+            return
+        text = self._note_entry.get().strip()
+        if not text:
+            return
+        if text.startswith("#"):
+            notes.add_tag(target, text)
+        else:
+            notes.add_note(target, text)
+        self._note_entry.delete(0, tk.END)
+        self._refresh_notes(target)
+        self._status("Заметка сохранена", C.INFO)
 
     # ----------------- Console -----------------
     def _build_console(self, parent):
@@ -470,16 +521,20 @@ class OSINTApp:
         """Экспорт структурированного отчёта последнего прогона (JSON+HTML)."""
         if self._last_report is not None:
             path = filedialog.asksaveasfilename(
-                defaultextension=".html",
-                filetypes=[("HTML", "*.html"), ("JSON", "*.json")],
+                defaultextension=".pdf",
+                filetypes=[("PDF", "*.pdf"), ("HTML", "*.html"), ("JSON", "*.json")],
                 title="Экспорт отчёта",
             )
             if not path:
                 return
             try:
-                directory = os.path.dirname(path) or "."
-                json_path, html_path = self._last_report.save(directory)
-                dual_print(f"\n[✓] Отчёт: {html_path}\n[✓] JSON:  {json_path}")
+                if path.lower().endswith(".pdf"):
+                    self._last_report.save_pdf(path)
+                    dual_print(f"\n[✓] PDF: {path}")
+                else:
+                    directory = os.path.dirname(path) or "."
+                    json_path, html_path = self._last_report.save(directory)
+                    dual_print(f"\n[✓] Отчёт: {html_path}\n[✓] JSON:  {json_path}")
             except Exception as e:
                 dual_print(f"\n[!] Ошибка: {e}")
             return
@@ -614,6 +669,11 @@ class OSINTApp:
         t = self.get_target()
         if t:
             self.run_in_thread(analyze_crypto, t, "Крипто")
+
+    def run_face(self):
+        t = self.get_target()
+        if t:
+            self.run_in_thread(analyze_face, t, "Реверс-фото")
 
     def run_investigate(self):
         """Расследование само пишет сводный отчёт — без обёртки run_in_thread."""

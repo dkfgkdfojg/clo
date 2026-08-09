@@ -23,6 +23,7 @@ from analyzers.domain import analyze_domain
 from analyzers.photo import analyze_photo
 from analyzers.card import analyze_card
 from analyzers.crypto import analyze_crypto
+from analyzers.face import analyze_face
 from analyzers.investigate import investigate
 from core import report
 
@@ -39,6 +40,7 @@ MODULES = {
     "photo": (analyze_photo, "Фото"),
     "card": (analyze_card, "Карта"),
     "crypto": (analyze_crypto, "Крипто"),
+    "face": (analyze_face, "Реверс-фото"),
 }
 
 

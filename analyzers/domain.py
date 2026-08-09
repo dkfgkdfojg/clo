@@ -5,20 +5,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.http import get_session, safe_get
 from core.utils import dual_print, print_section, print_field, print_summary, logger
 from core.verify import doh
+from core.cache import cached_json
 
 
 def _fetch_rdap(session, domain, results):
     """RDAP — официальная замена WHOIS, отдаёт JSON без ключа и без блокировок."""
     print_section("RDAP (регистрация)")
-    try:
-        r = safe_get(session, f"https://rdap.org/domain/{domain}", timeout=12)
-    except Exception as e:
-        dual_print(f"  [!] RDAP: {e}")
+    d = cached_json(session, f"https://rdap.org/domain/{domain}", ttl=3600, timeout=12)
+    if not d:
+        dual_print("  [!] RDAP: нет данных.")
         return
-    if r.status_code != 200:
-        dual_print(f"  [!] RDAP: {r.status_code}")
-        return
-    d = r.json()
     event_names = {
         "registration": "Создан",
         "expiration": "Истекает",
@@ -61,20 +57,10 @@ def _fetch_dns(session, domain, results):
 def _fetch_crtsh_json(session, domain, results):
     """Сабдомены из Certificate Transparency (crt.sh JSON) — надёжнее HTML-скрейпа."""
     print_section("crt.sh — сабдомены (CT-логи)")
-    try:
-        r = safe_get(
-            session, f"https://crt.sh/?q=%25.{domain}&output=json", timeout=20
-        )
-    except Exception as e:
-        dual_print(f"  [!] crt.sh: {e}")
-        return
-    if r.status_code != 200:
-        dual_print(f"  [!] crt.sh: {r.status_code}")
-        return
-    try:
-        data = r.json()
-    except Exception:
-        dual_print("  [!] crt.sh: пустой/битый ответ")
+    data = cached_json(session, f"https://crt.sh/?q=%25.{domain}&output=json",
+                       ttl=1800, timeout=20)
+    if not data:
+        dual_print("  [!] crt.sh: нет данных (часто 502 на их стороне).")
         return
     subs = set()
     for row in data:

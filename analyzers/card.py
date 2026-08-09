@@ -11,6 +11,7 @@ import re
 
 from core.http import get_session, safe_get
 from core.utils import dual_print, print_section, print_field, print_summary
+from core.cache import throttle
 
 API = "https://lookup.binlist.net/{}"
 
@@ -28,6 +29,7 @@ def analyze_card(target: str) -> None:
     results: dict[str, str] = {}
     session = get_session()
     print_section("binlist.net")
+    throttle(API.format(bin_digits[:8]))
     try:
         r = safe_get(
             session, API.format(bin_digits[:8]), timeout=12,
